@@ -1,0 +1,172 @@
+---
+title: "ESM262_Assignment2"
+author: "Celine Mol"
+date: "5/11/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Step 1. Import Tidy 
+
+### 1.1 Read the gazetteer data as-is (all columns; no type conversion) into a gaz_raw tibble
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(stringr)
+library(DBI)
+
+gaz_raw <- read_delim("CA_Features_20180401.txt", delim = "|", col_names = TRUE)
+```
+
+### 1.2 Copy only the following columns into a gaz tibble (you can rename them if you like):
+- feature ID
+- name
+- feature class
+- state alpha
+- county name
+- primary latitude (decimal)
+- primary longitude (decimal)
+- source latitude (decimal)
+- source longitude (decimal)
+- elevation in meters
+- map name
+- date created
+- date edited
+
+
+```{r}
+gaz <- gaz_raw %>% 
+  select(FEATURE_ID, FEATURE_NAME, FEATURE_CLASS, STATE_ALPHA, COUNTY_NAME, PRIM_LAT_DEC, 
+         PRIM_LONG_DEC, SOURCE_LAT_DEC, SOURCE_LONG_DEC, ELEV_IN_M, MAP_NAME, DATE_CREATED,
+         DATE_EDITED)
+```
+
+### 1.3 Convert the gaz columns to the appropriate type. Convert any placeholders for unknown data to NA
+
+```{r}
+spec(gaz)
+
+gaz <- type_convert(gaz, col_types = 
+               cols (
+                 DATE_CREATED = col_date(format = "%m/%d/%Y"),
+                 DATE_EDITED = col_date(format = "%m/%d/%Y")
+               ))
+```
+
+### 1.4 Delete from gaz rows where:
+- the primary latitude or longitude are unknown
+- the feature is not in California
+
+```{r}
+sum(gaz$PRIM_LAT_DEC == 0) 
+sum(gaz$PRIM_LONG_DEC == 0)
+
+gaz <- gaz %>%
+  filter(PRIM_LAT_DEC != 0, PRIM_LONG_DEC != 0) %>% 
+  filter(STATE_ALPHA == "CA")
+```
+
+## Step 2. Create a Database
+
+### 2.1 Create a connection to a new gaz.db SQLite database.
+
+```{r, warning=FALSE}
+
+con <- DBI::dbConnect(RSQLite::SQLite(), path = ":memory:")
+
+```
+
+### 2.2 Copy the gaz tibble into the gaz.db database.
+
+```{r, warning=FALSE}
+copy_to(con, gaz, "gaz", overwrite = TRUE,
+        temporary = FALSE,
+         indexes = list(
+          "FEATURE_NAME", "FEATURE_CLASS", "COUNTY_NAME",
+          "PRIM_LAT_DEC", "PRIM_LONG_DEC"
+        ))
+```
+
+
+## Step 3. Analyze
+
+### Using SQL queries and the dbGetQuery function, create R code snippets that answer the following questions about California:
+
+### 3.1 What is the most-frequently-occuring feature name?
+
+```{r}
+
+dbGetQuery(con, "SELECT COUNT(FEATURE_NAME), FEATURE_NAME 
+           FROM gaz 
+           GROUP BY FEATURE_NAME
+           ORDER BY COUNT(FEATURE_NAME) DESC;")
+
+```
+
+
+### 3.2 What is the least-frequently-occuring feature class?
+
+```{r}
+
+dbGetQuery(con, "SELECT COUNT(FEATURE_CLASS), FEATURE_CLASS 
+           FROM gaz 
+           GROUP BY FEATURE_CLASS
+           ORDER BY COUNT(FEATURE_CLASS);")
+
+```
+
+
+### 3.3 What is the approximate center point of each county?
+*Hint: Calculate the center of the bounding box of the county’s point features.*
+
+```{r}
+## For each county:
+## Take the average of coordinates at lat & long
+## Make a table that aggregates by county and only shows average lat long.
+
+dbGetQuery(con, "SELECT COUNTY_NAME, avg(PRIM_LAT_DEC), avg(PRIM_LONG_DEC) 
+           FROM gaz 
+           GROUP BY COUNTY_NAME;")
+
+```
+
+### 3.4 What are the fractions of the total number of features in each county that are natural? man-made?
+*Hint: Copy the feature class categories tibble you created into the gaz.db database. Then you can JOIN it to the the gaz table.*
+
+```{r, message=FALSE, warning=FALSE}
+classes <- read_csv("class_definitions.csv")
+colnames(classes) <- c("FEATURE_CLASS", "CLASS_DESCRIPTION")
+
+copy_to(con, classes, "classes", overwrite = FALSE,
+        temporary = FALSE,
+         indexes = list(
+          "FEATURE_CLASS", "CLASS_DESCRIPTION"
+        ))
+
+dbGetQuery(con, "CREATE TABLE Fractions(
+           FEATURE_CLASS text, 
+           CLASS_DESCRIPTION text, 
+           COUNTY_NAME text);")
+
+dbGetQuery(con, "INSERT INTO Fractions
+           SELECT gaz.FEATURE_CLASS, CLASS_DESCRIPTION, COUNTY_NAME
+           FROM gaz JOIN classes
+           ON gaz.FEATURE_CLASS=classes.FEATURE_CLASS;")
+
+dbGetQuery(con, "SELECT COUNTY_NAME, natural, manmade, total, 
+                        CAST(natural AS REAL) / total AS FRACTION_NATURAL,
+                        CAST(manmade AS REAL) / total AS FRACTION_MANMADE
+                FROM (SELECT COUNTY_NAME, 
+                        SUM(CLASS_DESCRIPTION = 'natural') AS natural, 
+                        SUM(CLASS_DESCRIPTION = 'manmade') AS manmade,
+                        COUNT(CLASS_DESCRIPTION) AS total
+           FROM Fractions
+           GROUP BY COUNTY_NAME);")
+
+```
+
+
