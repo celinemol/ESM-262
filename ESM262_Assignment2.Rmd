@@ -53,8 +53,8 @@ spec(gaz)
 gaz <- type_convert(gaz, col_types = 
                cols (
                  DATE_CREATED = col_date(format = "%m/%d/%Y"),
-                 DATE_EDITED = col_date(format = "%m/%d/%Y")
-               ))
+                 DATE_EDITED = col_date(format = "%m/%d/%Y")),
+               na = c("Unknown", 0))
 ```
 
 ### 1.4 Delete from gaz rows where:
@@ -100,10 +100,11 @@ copy_to(con, gaz, "gaz", overwrite = TRUE,
 
 ```{r}
 
-dbGetQuery(con, "SELECT COUNT(FEATURE_NAME), FEATURE_NAME 
+dbGetQuery(con, "SELECT MAX(COUNTS) AS MAX, FEATURE_NAME
+           FROM (SELECT COUNT(FEATURE_NAME) AS COUNTS, FEATURE_NAME
            FROM gaz 
            GROUP BY FEATURE_NAME
-           ORDER BY COUNT(FEATURE_NAME) DESC;")
+           ORDER BY COUNT(FEATURE_NAME) DESC);")
 
 ```
 
@@ -112,10 +113,11 @@ dbGetQuery(con, "SELECT COUNT(FEATURE_NAME), FEATURE_NAME
 
 ```{r}
 
-dbGetQuery(con, "SELECT COUNT(FEATURE_CLASS), FEATURE_CLASS 
+dbGetQuery(con, "SELECT MIN(COUNTS) AS MIN, FEATURE_CLASS
+           FROM (SELECT COUNT(FEATURE_CLASS) AS COUNTS, FEATURE_CLASS 
            FROM gaz 
            GROUP BY FEATURE_CLASS
-           ORDER BY COUNT(FEATURE_CLASS);")
+           ORDER BY COUNT(FEATURE_CLASS));")
 
 ```
 
@@ -125,12 +127,15 @@ dbGetQuery(con, "SELECT COUNT(FEATURE_CLASS), FEATURE_CLASS
 
 ```{r}
 ## For each county:
-## Take the average of coordinates at lat & long
+## Tax max + min / 2 at each lat long
 ## Make a table that aggregates by county and only shows average lat long.
 
-dbGetQuery(con, "SELECT COUNTY_NAME, avg(PRIM_LAT_DEC), avg(PRIM_LONG_DEC) 
+dbGetQuery(con, "SELECT COUNTY_NAME, 
+                        (MAX(PRIM_LAT_DEC) + MIN(PRIM_LAT_DEC))/2 AS CENTER_PRIM_LAT_DEC,
+                        (MAX(PRIM_LONG_DEC) + MIN(PRIM_LONG_DEC))/2 AS CENTER_PRIM_LONG_DEC 
            FROM gaz 
            GROUP BY COUNTY_NAME;")
+
 
 ```
 
